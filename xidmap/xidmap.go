@@ -19,6 +19,7 @@ package xidmap
 import (
 	"context"
 	"encoding/binary"
+	"io/ioutil"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -50,7 +51,7 @@ type shard struct {
 	sync.RWMutex
 	block
 
-	uidMap map[string]uint64
+	uidMap *RocksDB
 }
 
 type block struct {
@@ -79,8 +80,10 @@ func New(zero *grpc.ClientConn, db *badger.DB) *XidMap {
 		shards:    make([]*shard, numShards),
 	}
 	for i := range xm.shards {
+		path, err := ioutil.TempDir("nil", "xidmap-shard")
+		x.Check(err)
 		xm.shards[i] = &shard{
-			uidMap: make(map[string]uint64),
+			uidMap: NewRocksDB(path),
 		}
 	}
 	if db != nil {
@@ -100,7 +103,7 @@ func New(zero *grpc.ClientConn, db *badger.DB) *XidMap {
 				err := item.Value(func(val []byte) error {
 					uid := binary.BigEndian.Uint64(val)
 					// No need to acquire a lock. This is all serial access.
-					sh.uidMap[key] = uid
+					sh.uidMap.Set(key, uid)
 					return nil
 				})
 				if err != nil {
@@ -152,7 +155,7 @@ func (m *XidMap) shardFor(xid string) *shard {
 func (m *XidMap) AssignUid(xid string) (uint64, bool) {
 	sh := m.shardFor(xid)
 	sh.RLock()
-	uid := sh.uidMap[xid]
+	uid := sh.uidMap.Get(xid)
 	sh.RUnlock()
 	if uid > 0 {
 		return uid, false
@@ -161,13 +164,13 @@ func (m *XidMap) AssignUid(xid string) (uint64, bool) {
 	sh.Lock()
 	defer sh.Unlock()
 
-	uid = sh.uidMap[xid]
+	uid = sh.uidMap.Get(xid)
 	if uid > 0 {
 		return uid, false
 	}
 
 	newUid := sh.assign(m.newRanges)
-	sh.uidMap[xid] = newUid
+	sh.uidMap.Set(xid, newUid)
 
 	if m.writer != nil {
 		var uidBuf [8]byte
