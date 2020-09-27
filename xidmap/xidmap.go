@@ -21,6 +21,7 @@ import (
 	"encoding/binary"
 	"io/ioutil"
 	"math/rand"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -79,8 +80,13 @@ func New(zero *grpc.ClientConn, db *badger.DB) *XidMap {
 		newRanges: make(chan *pb.AssignedIds, numShards),
 		shards:    make([]*shard, numShards),
 	}
+	prefix := "./xidmap-cache"
+	_, err := os.Stat(prefix)
+	if os.IsNotExist(err) {
+		_ = os.MkdirAll(prefix, 755)
+	}
 	for i := range xm.shards {
-		path, err := ioutil.TempDir("nil", "xidmap-shard")
+		path, err := ioutil.TempDir(prefix, "xidmap-shard")
 		x.Check(err)
 		xm.shards[i] = &shard{
 			uidMap: NewRocksDB(path),
