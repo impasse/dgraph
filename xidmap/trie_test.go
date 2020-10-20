@@ -20,14 +20,10 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/dustin/go-humanize"
 	"github.com/stretchr/testify/require"
 )
 
 func TestTrie(t *testing.T) {
-	require.Equal(t, uint32(24), uint32(nodeSz),
-		"Size of Trie node should be 24. Got: %d\n", nodeSz)
-
 	trie := NewTrie()
 
 	trie.Put("trie", 1)
@@ -42,8 +38,6 @@ func TestTrie(t *testing.T) {
 	require.Equal(t, uint64(3), trie.Get("bird"))
 	require.Equal(t, uint64(4), trie.Get("birds"))
 	require.Equal(t, uint64(5), trie.Get("t"))
-	t.Logf("Size of node: %d\n", nodeSz)
-	t.Logf("Size used by allocator: %d\n", trie.Size())
 }
 
 // $ go test -bench=BenchmarkWordsTrie --run=XXX -benchmem -memprofile mem.out
@@ -63,9 +57,6 @@ func BenchmarkWordsTrie(b *testing.B) {
 		word := string(buf)
 		trie.Put(word, uid)
 	}
-	b.Logf("Words: %d. Allocator: %s. Per word: %d\n", uid,
-		humanize.IBytes(uint64(trie.Size())),
-		uint64(trie.Size())/uid)
 	b.StopTimer()
 }
 
