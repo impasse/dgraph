@@ -17,36 +17,35 @@
 package xidmap
 
 import (
-	"math"
 	"unsafe"
 
 	"github.com/dgraph-io/dgraph/x"
-	"github.com/dgraph-io/ristretto/z"
+	"github.com/impasse/ristretto/z"
 )
 
 // Trie is an implementation of Ternary Search Tries to store XID to UID map. It uses Arena to
 // allocate nodes in the trie. It is not thread-safe.
 type Trie struct {
-	root uint32
+	root int64
 	buf  *z.Buffer
 }
 
 // NewTrie would return back a Trie backed by the provided Arena. Trie would assume ownership of the
 // Arena. Release must be called at the end to release Arena's resources.
 func NewTrie() *Trie {
-	buf, err := z.NewBufferWith(32<<20, math.MaxUint32, z.UseMmap)
+	buf, err := z.NewBufferWith(32<<20, 1<<34, z.UseMmap)
 	x.Check(err)
 	ro := buf.AllocateOffset(nodeSz)
 	return &Trie{
-		root: uint32(ro),
+		root: ro,
 		buf:  buf,
 	}
 }
-func (t *Trie) getNode(offset uint32) *node {
+func (t *Trie) getNode(offset int64) *node {
 	if offset == 0 {
 		return nil
 	}
-	data := t.buf.Data(int(offset))
+	data := t.buf.Data(offset)
 	return (*node)(unsafe.Pointer(&data[0]))
 }
 
@@ -75,14 +74,14 @@ func (t *Trie) Release() {
 type node struct {
 	uid   uint64
 	r     byte
-	left  uint32
-	mid   uint32
-	right uint32
+	left  int64
+	mid   int64
+	right int64
 }
 
-var nodeSz = int(unsafe.Sizeof(node{}))
+var nodeSz = int64(unsafe.Sizeof(node{}))
 
-func (t *Trie) get(offset uint32, key string) uint64 {
+func (t *Trie) get(offset int64, key string) uint64 {
 	if len(key) == 0 {
 		return 0
 	}
@@ -104,11 +103,11 @@ func (t *Trie) get(offset uint32, key string) uint64 {
 	return 0
 }
 
-func (t *Trie) put(offset uint32, key string, uid uint64) uint32 {
+func (t *Trie) put(offset int64, key string, uid uint64) int64 {
 	n := t.getNode(offset)
 	r := key[0]
 	if n == nil {
-		offset = uint32(t.buf.AllocateOffset(nodeSz))
+		offset = t.buf.AllocateOffset(nodeSz)
 		n = t.getNode(offset)
 		n.r = r
 	}
