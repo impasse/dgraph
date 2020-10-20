@@ -50,7 +50,7 @@ type shard struct {
 	sync.RWMutex
 	block
 
-	trie *Trie
+	r *RedisStore
 }
 
 type block struct {
@@ -73,14 +73,14 @@ func (b *block) assign(ch <-chan *pb.AssignedIds) uint64 {
 // badger.DB can be provided to persist the xid to uid allocations. This would add latency to the
 // assignment operations.
 func New(zero *grpc.ClientConn, db *badger.DB) *XidMap {
-	numShards := 32
+	numShards := 16
 	xm := &XidMap{
 		newRanges: make(chan *pb.AssignedIds, numShards),
 		shards:    make([]*shard, numShards),
 	}
 	for i := range xm.shards {
 		xm.shards[i] = &shard{
-			trie: NewTrie(),
+			r: NewRedisStore(i),
 		}
 	}
 	if db != nil {
@@ -104,7 +104,7 @@ func New(zero *grpc.ClientConn, db *badger.DB) *XidMap {
 				err := item.Value(func(val []byte) error {
 					uid := binary.BigEndian.Uint64(val)
 					// No need to acquire a lock. This is all serial access.
-					sh.trie.Put(key, uid)
+					sh.r.Put(key, uid)
 					return nil
 				})
 				if err != nil {
@@ -155,7 +155,7 @@ func (m *XidMap) CheckUid(xid string) bool {
 	sh := m.shardFor(xid)
 	sh.RLock()
 	defer sh.RUnlock()
-	uid := sh.trie.Get(xid)
+	uid, _ := sh.r.Get(xid)
 	return uid != 0
 }
 
@@ -163,7 +163,7 @@ func (m *XidMap) SetUid(xid string, uid uint64) {
 	sh := m.shardFor(xid)
 	sh.Lock()
 	defer sh.Unlock()
-	sh.trie.Put(xid, uid)
+	sh.r.Put(xid, uid)
 }
 
 // AssignUid creates new or looks up existing XID to UID mappings. It also returns if
@@ -171,7 +171,7 @@ func (m *XidMap) SetUid(xid string, uid uint64) {
 func (m *XidMap) AssignUid(xid string) (uint64, bool) {
 	sh := m.shardFor(xid)
 	sh.RLock()
-	uid := sh.trie.Get(xid)
+	uid, _ := sh.r.Get(xid)
 	sh.RUnlock()
 	if uid > 0 {
 		return uid, false
@@ -180,13 +180,13 @@ func (m *XidMap) AssignUid(xid string) (uint64, bool) {
 	sh.Lock()
 	defer sh.Unlock()
 
-	uid = sh.trie.Get(xid)
+	uid, _ = sh.r.Get(xid)
 	if uid > 0 {
 		return uid, false
 	}
 
 	newUid := sh.assign(m.newRanges)
-	sh.trie.Put(xid, newUid)
+	sh.r.Put(xid, newUid)
 
 	// TODO: Iterate over Trie in sequence and use stream write to write it out to Badger at the
 	// end. No need to write here.
@@ -252,7 +252,7 @@ func (m *XidMap) AllocateUid() uint64 {
 // Flush must be called if DB is provided to XidMap.
 func (m *XidMap) Flush() error {
 	for _, shard := range m.shards {
-		shard.trie.Release()
+		shard.r.Release()
 	}
 	if m.writer == nil {
 		return nil
